@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<!-- @noSnoop -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AHU1 Points with Histories</title>
+  <!-- Custom RequireJS configuration -->
+  <script type="text/javascript">
+    var require = {
+      paths: {
+        "jquery": "/module/Beau/resources/js/jquery.min",
+        "d3": "/module/Beau/resources/js/d3.min",
+        "dayjs": "/module/Beau/resources/js/dayjs/dayjs.min",
+        "lodash": "/module/Beau/resources/js/lodash/lodash.min",
+        "baja": "/module/bajaScript/rc/plugin/baja"
+      },
+      shim: {
+        "d3": { exports: "d3" },
+        "lodash": { exports: "_" }
+      }
+    };
+  </script>
+  <!-- Niagara default config and require -->
+  <script type="text/javascript" src="/requirejs/config.js"></script>
+  <script type="text/javascript" src="/module/js/com/tridium/js/ext/require/require.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f5f5f5;
+    }
+    /* Grid container for cards */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 15px;
+    }
+    /* Card styling */
+    .card {
+      background: #fff;
+      border-radius: 5px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      overflow: hidden;
+      position: relative;
+      transition: transform 0.2s;
+    }
+    .card:hover {
+      transform: scale(1.02);
+    }
+    /* Card header */
+    .card-header {
+      background: #e9f5ff;
+      padding: 8px;
+      border-bottom: 1px solid #b8d8f8;
+      font-weight: bold;
+    }
+    /* Card body (small by default, expands on hover) */
+    .card-body {
+      padding: 8px;
+      height: 60px;         /* Small initial height */
+      overflow: hidden;     /* Hide the sparkline initially */
+      transition: height 0.3s;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .card:hover .card-body {
+      height: 150px; /* Expanded height to reveal sparkline */
+    }
+    /* Sparkline container */
+    .sparkline-container {
+      width: 100%;
+      height: 60px;
+      margin-top: 8px;
+    }
+    /* Current value display */
+    .current-value {
+      font-size: 14px;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>AHU1 Points from History</h1>
+  <div class="card-grid">
+    <!-- Card for SpaceTemp -->
+    <div class="card" id="card-spaceTemp">
+      <div class="card-header">AHU1 SpaceTemp</div>
+      <div class="card-body">
+        <p class="current-value" id="value-spaceTemp">-- °F</p>
+        <div class="sparkline-container" id="sparkline-spaceTemp"></div>
+      </div>
+    </div>
+    <!-- Card for Fan -->
+    <div class="card" id="card-fan">
+      <div class="card-header">AHU1 Fan</div>
+      <div class="card-body">
+        <p class="current-value" id="value-fan">--</p>
+        <div class="sparkline-container" id="sparkline-fan"></div>
+      </div>
+    </div>
+    <!-- Card for DAT -->
+    <div class="card" id="card-dat">
+      <div class="card-header">AHU1 DAT</div>
+      <div class="card-body">
+        <p class="current-value" id="value-dat">-- °F</p>
+        <div class="sparkline-container" id="sparkline-dat"></div>
+      </div>
+    </div>
+    <!-- Card for HWV -->
+    <div class="card" id="card-hwv">
+      <div class="card-header">AHU1 HWV</div>
+      <div class="card-body">
+        <p class="current-value" id="value-hwv">--</p>
+        <div class="sparkline-container" id="sparkline-hwv"></div>
+      </div>
+    </div>
+  </div>
+  
+  <script type="text/javascript">
+    require(['jquery', 'd3', 'dayjs', 'lodash', 'baja!'], function($, d3, dayjs, _, baja) {
+      
+      // Define BQL queries for historical data for each point.
+      // Adjust these queries to match your actual point histories.
+      var queries = {
+        spaceTemp: "history:/GPG/AHU1_SpaceTemp?|bql:select timestamp, value",
+        fan:       "history:/GPG/AHU1_Fan?|bql:select timestamp, value",
+        dat:       "history:/GPG/AHU1_DAT?|bql:select timestamp, value",
+        hwv:       "history:/GPG/AHU1_HWV?|bql:select timestamp, value"
+      };
+
+      // Fetch historical data using a BQL query.
+      async function fetchHistoricalData(bqlQuery) {
+        try {
+          const result = await baja.Ord.make(bqlQuery).get();
+          const data = [];
+          if (result && typeof result.cursor === "function") {
+            await result.cursor({
+              each: function(row) {
+                data.push({
+                  timestamp: row.get("timestamp") ? row.get("timestamp").toString() : "",
+                  value: row.get("value") ? row.get("value").toString() : ""
+                });
+              },
+              limit: 500
+            });
+          }
+          return data;
+        } catch (error) {
+          console.error("Error fetching data for query:", bqlQuery, error);
+          return [];
+        }
+      }
+
+      // Render a sparkline inside a container using D3.
+      function renderSparkline(containerId, dataArray) {
+        var container = d3.select("#" + containerId);
+        container.select("svg").remove(); // Clear any existing sparkline
+        
+        var width = container.node().getBoundingClientRect().width;
+        var height = container.node().getBoundingClientRect().height;
+        if (width === 0 || height === 0) return;  // Nothing to render
+        
+        var svg = container.append("svg")
+                           .attr("width", width)
+                           .attr("height", height);
+
+        // Convert data values to numbers
+        var yValues = dataArray.map(d => Number(d.value));
+        if (yValues.length === 0) return; // No data to display
+
+        var xScale = d3.scaleLinear()
+                       .domain([0, yValues.length - 1])
+                       .range([0, width]);
+        
+        var yExtent = d3.extent(yValues);
+        var yPadding = (yExtent[1] - yExtent[0]) * 0.1;
+        var yScale = d3.scaleLinear()
+                       .domain([yExtent[0] - yPadding, yExtent[1] + yPadding])
+                       .range([height, 0]);
+        
+        var line = d3.line()
+                     .x((d, i) => xScale(i))
+                     .y(d => yScale(Number(d.value)))
+                     .curve(d3.curveBasis);
+        
+        svg.append("path")
+           .datum(dataArray)
+           .attr("d", line)
+           .attr("stroke", "steelblue")
+           .attr("stroke-width", 2)
+           .attr("fill", "none");
+        
+        // Add a circle at the last data point
+        var lastIndex = dataArray.length - 1;
+        var lastVal = Number(dataArray[lastIndex].value);
+        svg.append("circle")
+           .attr("cx", xScale(lastIndex))
+           .attr("cy", yScale(lastVal))
+           .attr("r", 3)
+           .attr("fill", "steelblue");
+      }
+
+      // Update a single card by fetching its historical data and using the last known value.
+      async function updateCard(pointKey) {
+        var data = await fetchHistoricalData(queries[pointKey]);
+        if (data.length === 0) {
+          console.warn("No historical data for", pointKey);
+          return;
+        }
+        // Use the last known sample as the current value.
+        var lastPoint = data[data.length - 1];
+        var lastVal = Number(lastPoint.value).toFixed(1);
+        if (pointKey === "fan") {
+          $("#value-" + pointKey).text(Number(lastPoint.value) ? "On" : "Off");
+        } else {
+          $("#value-" + pointKey).text(lastVal + " °F");
+        }
+        renderSparkline("sparkline-" + pointKey, data);
+      }
+      
+      // Update each card (SpaceTemp, Fan, DAT, HWV)
+      updateCard("spaceTemp");
+      updateCard("fan");
+      updateCard("dat");
+      updateCard("hwv");
+    });
+  </script>
+</body>
+</html>

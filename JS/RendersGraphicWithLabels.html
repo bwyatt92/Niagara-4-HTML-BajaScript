@@ -1,0 +1,359 @@
+
+<!DOCTYPE html>
+<!-- @noSnoop -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Equipment Graphic Index & Live Data</title>
+  <script type="text/javascript" src="/requirejs/config.js"></script>
+  <script type="text/javascript" src="/module/js/com/tridium/js/ext/require/require.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; }
+    .selector-panel {
+      margin: 20px;
+      padding: 10px;
+      border: 1px solid #ccc;
+      width: 300px;
+    }
+    .graphic-container {
+      position: relative;
+      width: 1000px;
+      height: 400px;
+      background-color: #f0f0f0;
+      border: 1px solid #ccc;
+      margin-top: 20px;
+    }
+    .graphic-label {
+    position: absolute;
+    font-size: 12px;
+    color: #333;
+    background: rgba(255,255,255,0.8);
+    padding: 2px 4px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    white-space: nowrap; /* Prevent text wrapping */
+    pointer-events: none; /* Allow clicks to pass through to components */
+    z-index: 3; /* Above components */
+    }
+    
+    .graphic-component {
+        position: absolute;
+        height: 90px;
+        z-index: 2; /* Below labels */
+    }
+  </style>
+</head>
+<body>
+  <h2>Silo - AHU Graphic Index</h2>
+  <div class="selector-panel">
+    <label for="equipment">Select Equipment (with Graphic Config):</label>
+    <select id="equipment">
+      <option value="">Loading equipment...</option>
+    </select>
+    <br>
+    <button id="loadConfigBtn" type="button">Load Graphic Configuration</button>
+  </div>
+  <div class="graphic-container" id="graphicContainer">
+    <!-- The graphic will be built here -->
+  </div>
+  
+  <script>
+    require(['baja!'], function(baja) {
+      "use strict";
+      
+      // Helper: Convert numeric values to CSS strings.
+      function toCssValue(val) {
+        return typeof val === "number" ? val + "px" : val;
+      }
+      
+      // Helper: Construct a subordinate point ORD.
+      // (This version prepends "station:|" if needed.)
+      function getPointOrd(equipmentOrd, pointName) {
+        if (equipmentOrd.indexOf("station:|") !== 0) {
+          equipmentOrd = "station:|" + equipmentOrd;
+        }
+        return equipmentOrd + "/" + pointName;
+      }
+      
+      // Helper: Construct the configuration ORD.
+      function getConfigOrd(equipmentOrd) {
+        if (equipmentOrd.endsWith("/points")) {
+          equipmentOrd = equipmentOrd.substring(0, equipmentOrd.lastIndexOf("/points"));
+        }
+        if (equipmentOrd.indexOf("station:|") !== 0) {
+          equipmentOrd = "station:|" + equipmentOrd;
+        }
+        return equipmentOrd + "/graphicConfig";
+      }
+      
+      // Base SVG mapping for components (must match keys stored in config JSON).
+      var svgMapping = {
+        fan: {
+          url: '/ord/module://kitPxN4svg/Fans/Fans_Horz/Fans_Horz_Left/Fans_Horz_Left_Off.svg',
+          pos: { top: '50%', left: '130px', transform: 'translateY(-50%)' }
+        },
+        duct: {
+          url: '/ord/module://kitPxN4svg/Ductwork/Duct_Horz_Long.svg',
+          pos: { top: '50%', left: '260px', transform: 'translateY(-50%)' }
+        },
+        dat: {
+          url: '/ord/module://kitPxN4svg/Sensors/sensor_duct_avgtemp_top.svg',
+          pos: { top: '48%', left: '310px', transform: 'translateY(-50%)' }
+        },
+        hwv: {
+          url: '/ord/module://kitPxN4svg/Coils/Coils_Heating/Coils_Heating_0.svg',
+          pos: { top: '50%', left: '450px', transform: 'translateY(-50%)' }
+        },
+        cooling: {
+          url: '/ord/module://kitPxN4svg/Coils/Coils_Cooling_DX_1Stg/Coils_Cooling_DX_1Stg_On.svg',
+          pos: { top: '50%', left: '450px', transform: 'translateY(-50%)' }
+        },
+        damper: {
+          url: '/ord/module://kitPxN4svg/Dampers/Damper_Horz_Parallel/Damper_Horz_Parallel_4.svg',
+          pos: { top: '50%', left: '450px', transform: 'translateY(-50%)' }
+        }
+      };
+      
+      // Function to build the graphic from the configuration JSON.
+      function buildGraphicFromConfig(config) {
+        var container = document.getElementById("graphicContainer");
+        container.innerHTML = "";
+        var components = config.components || [];
+        
+        // Ensure "duct" is included.
+        if (!components.find(c => c.key === "duct")) {
+            components.push({ key: "duct", position: svgMapping["duct"].pos });
+        }
+        
+        // Render each component.
+        components.forEach(function(comp) {
+            var key = comp.key;
+            if (svgMapping[key] && svgMapping[key].url) {
+                // Create and position the component image.
+                var img = document.createElement("img");
+                img.src = svgMapping[key].url;
+                img.className = "graphic-component";
+                
+                // Get position - prefer config position, fall back to default
+                var pos = comp.position || svgMapping[key].pos || {};
+                
+                // Apply positioning
+                if (pos.top !== undefined) {
+                    img.style.top = toCssValue(pos.top);
+                }
+                if (pos.left !== undefined) {
+                    img.style.left = toCssValue(pos.left);
+                }
+                if (pos.transform) { 
+                    img.style.transform = pos.transform; 
+                }
+                img.style.zIndex = (key === "duct") ? 1 : 2;
+                img.setAttribute("data-key", key);
+                container.appendChild(img);
+                
+                // Inside the buildGraphicFromConfig function, replace the label creation code with:
+
+                // If label information exists, create two labels.
+                if (comp.label) {
+                    // Get the component's position to base labels on
+                    var componentTop = 0;
+                    var componentLeft = 0;
+                    
+                    // Calculate component's actual top position
+                    if (pos.top !== undefined) {
+                        if (typeof pos.top === 'number') {
+                            componentTop = pos.top;
+                        } else if (pos.top.toString().endsWith('%')) {
+                            var percent = parseFloat(pos.top);
+                            componentTop = (percent / 100) * container.offsetHeight;
+                        } else if (pos.top.toString().endsWith('px')) {
+                            componentTop = parseFloat(pos.top);
+                        }
+                    }
+                    
+                    // Calculate component's actual left position
+                    if (pos.left !== undefined) {
+                        if (typeof pos.left === 'number') {
+                            componentLeft = pos.left;
+                        } else if (pos.left.toString().endsWith('%')) {
+                            var percent = parseFloat(pos.left);
+                            componentLeft = (percent / 100) * container.offsetWidth;
+                        } else if (pos.left.toString().endsWith('px')) {
+                            componentLeft = parseFloat(pos.left);
+                        }
+                    }
+                    
+                    // Get component height (default to 90px as per your CSS)
+                    var componentHeight = 90;
+                    
+                    // Display label (custom text)
+                    if (comp.label.display) {
+                        var dispLabel = document.createElement("div");
+                        dispLabel.className = "graphic-label";
+                        dispLabel.textContent = comp.label.display;
+                        dispLabel.style.top = (componentTop + componentHeight + 5) + 'px'; // 5px below component
+                        dispLabel.style.left = componentLeft + 'px';
+                        dispLabel.style.zIndex = 3; // Ensure labels are above components
+                        container.appendChild(dispLabel);
+                    }
+                    
+                    // Value label (initial out.value)
+                    if (comp.label.value) {
+                        var valLabel = document.createElement("div");
+                        valLabel.className = "graphic-label";
+                        valLabel.textContent = comp.label.value;
+                        valLabel.style.top = (componentTop + componentHeight + 25) + 'px'; // 25px below component
+                        valLabel.style.left = componentLeft + 'px';
+                        valLabel.style.zIndex = 3; // Ensure labels are above components
+                        container.appendChild(valLabel);
+                    }
+                }
+            } else {
+                console.log("No SVG mapping for key:", key);
+            }
+        });
+    }
+      
+      // Function to load the configuration JSON from the station.
+      function loadConfigFromWritablePoint(equipmentOrd) {
+        var configOrd = getConfigOrd(equipmentOrd);
+        console.log("Loading configuration from:", configOrd);
+        baja.Ord.make(configOrd)
+          .get()
+          .then(function(configSlot) {
+            var configStr = (configSlot && typeof configSlot.getValue === 'function')
+                            ? configSlot.getValue().trim()
+                            : configSlot.toString().trim();
+            // Remove any extraneous trailing characters.
+            var lastIndex = configStr.lastIndexOf("}");
+            if (lastIndex !== -1) {
+              configStr = configStr.substring(0, lastIndex + 1);
+            }
+            console.log("Configuration string:", configStr);
+            try {
+              var config = JSON.parse(configStr);
+              console.log("Parsed configuration:", config);
+              buildGraphicFromConfig(config);
+              // Wire live data if needed (for example, update fan or HWV images)
+              wireLiveData(config.equipment);
+            } catch (e) {
+              console.error("Error parsing JSON configuration:", e);
+              alert("Error parsing configuration JSON.");
+            }
+          })
+          .catch(function(err) {
+            console.error("Error retrieving configuration:", err);
+            alert("Error retrieving configuration from selected equipment.");
+          });
+      }
+      
+      // Live data wiring (example for fan and HWV)
+      function subscribeToPoint(ord, updateFunction) {
+        var sub = new baja.Subscriber();
+        sub.attach('changed', function(prop) {
+          if (prop.getName() === 'out') {
+            var newValue = this.getOut().getValue();
+            console.log("Point value changed:", ord, "New Value:", newValue);
+            updateFunction(newValue);
+          }
+        });
+        baja.Ord.make(ord).get({ subscriber: sub })
+          .then(function(point) {
+            var initialValue = point.getOut().getValue();
+            console.log("Point resolved:", ord, "Initial Value:", initialValue);
+            updateFunction(initialValue);
+          })
+          .catch(function(err) {
+            console.error("Error resolving point:", ord, err);
+          });
+        return sub;
+      }
+      
+      // Example update functions that change SVG URLs based on point value.
+      function updateFanSVG(value) {
+        var fanImg = document.querySelector("img[data-key='fan']");
+        if (fanImg) {
+          fanImg.src = value ? '/ord/module://kitPxN4svg/Fans/Fans_Horz/Fans_Horz_Left/Fans_Horz_Left_On.svg'
+                             : '/ord/module://kitPxN4svg/Fans/Fans_Horz/Fans_Horz_Left/Fans_Horz_Left_Off.svg';
+        }
+      }
+      
+      function updateHeatingCoilSVG(value) {
+        var coilImg = document.querySelector("img[data-key='hwv']");
+        if (coilImg) {
+          let index;
+          if (value <= 20) index = 0;
+          else if (value <= 40) index = 1;
+          else if (value <= 60) index = 2;
+          else if (value <= 80) index = 3;
+          else index = 4;
+          coilImg.src = '/ord/module://kitPxN4svg/Coils/Coils_Heating/Coils_Heating_' + index + '.svg';
+        }
+      }
+      
+      function wireLiveData(equipmentOrd) {
+        var fanOrd = getPointOrd(equipmentOrd, "Fan");
+        var hwvOrd = getPointOrd(equipmentOrd, "HWV");
+        subscribeToPoint(fanOrd, updateFanSVG);
+        subscribeToPoint(hwvOrd, updateHeatingCoilSVG);
+      }
+      
+      // Equipment dropdown for index: load equipment with a graphicConfig slot.
+      function updateEquipmentDropdownWithGraphicConfig() {
+        var dropdown = document.getElementById("equipment");
+        if (!dropdown) {
+          console.error("Equipment dropdown not found.");
+          return;
+        }
+        dropdown.innerHTML = "<option value=''>Loading equipment...</option>";
+      
+        var neql = 'station:|slot:|neql: graphicConfig |bql:select displayName, slotPathOrd';
+        console.log("Running NEQL Query:", neql);
+        baja.Ord.make(neql).get().then(result => {
+          if (!result || !result.cursor()) {
+            dropdown.innerHTML = "<option value=''>No Equipment Found</option>";
+            return;
+          }
+          var options = [];
+          result.cursor({ 
+            each: row => {
+              options.push({ 
+                displayName: row.get("displayName"), 
+                ord: row.get("slotPathOrd").toString() 
+              });
+            },
+            after: () => {
+              dropdown.innerHTML = "";
+              options.sort((a, b) => a.displayName.localeCompare(b.displayName));
+              options.forEach(opt => {
+                var el = document.createElement("option");
+                el.value = opt.ord;
+                el.textContent = opt.displayName;
+                dropdown.appendChild(el);
+              });
+            },
+            limit: 100
+          });
+        }).catch(err => {
+          console.error("Error executing NEQL query:", err);
+          dropdown.innerHTML = "<option value=''>Error Loading Data</option>";
+        });
+      }
+      
+      updateEquipmentDropdownWithGraphicConfig();
+      
+      document.getElementById("loadConfigBtn").addEventListener("click", function() {
+        var dropdown = document.getElementById("equipment");
+        var selectedOrd = dropdown.value;
+        if (selectedOrd) {
+          loadConfigFromWritablePoint(selectedOrd);
+        } else {
+          alert("Please select equipment.");
+        }
+      });
+      
+    });
+  </script>
+</body>
+</html>

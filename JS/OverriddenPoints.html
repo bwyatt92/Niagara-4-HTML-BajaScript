@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<!-- @noSnoop -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Override Release Console</title>
+  <script type="text/javascript" src="/requirejs/config.js"></script>
+  <script type="text/javascript" src="/module/js/com/tridium/js/ext/require/require.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+    th { background-color: #f2f2f2; position: sticky; top: 0; }
+    tr:nth-child(even) { background-color: #f9f9f9; }
+    tr:hover { background-color: #f1f1f1; }
+    button { 
+      margin: 5px; 
+      padding: 10px 15px; 
+      font-size: 14px; 
+      cursor: pointer;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+    }
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    button.danger {
+      background-color: #f44336;
+    }
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+    }
+    .success { background-color: #dff0d8; color: #3c763d; }
+    .error { background-color: #f2dede; color: #a94442; }
+    .info { background-color: #d9edf7; color: #31708f; }
+    .loading { color: #666; font-style: italic; }
+    .actions { margin: 20px 0; }
+    /* Simple header styling */
+    .header {
+      display: flex;           /* Put the logo and heading in a row */
+      align-items: center;     /* Vertically center them */
+      border-bottom: 2px solid #ddd;
+      padding: 10px;
+      margin-bottom: 20px;
+      background-color: #fff;  /* Optional: give it a background */
+    }
+    .header img {
+      height: 50px;           /* Control the logo height */
+      margin-right: 15px;     /* Space between logo and heading */
+    }
+    .header h1 {
+      margin: 0;              /* Remove default margin */
+      font-size: 1.8em;       /* Make it a bit bigger */
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <img src="/file/GPG/GPG_Advisers_Logo.png" alt="GPG Advisers Logo">
+    <h1>GPG Override Management</h1>
+  </header>
+  <div class="actions">
+    <button id="refreshBtn">Refresh List</button>
+    <button id="releaseAllBtn" class="danger">Release All Overrides</button>
+    <button id="releaseSelectedBtn" class="danger" disabled>Release Selected</button>
+  </div>
+  
+  <div id="status" class="status info">Loading overridden points...</div>
+  
+
+  <div id="results">
+    <table id="pointsTable" style="display: none;">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="selectAll"></th>
+          <th>Point Name</th>
+          <th>Current Value</th>
+          <th>Location</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="pointsBody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    require(['baja!'], function(baja) {
+      "use strict";
+      
+      // DOM elements
+      const statusDiv = document.getElementById('status');
+      const pointsTable = document.getElementById('pointsTable');
+      const pointsBody = document.getElementById('pointsBody');
+      const refreshBtn = document.getElementById('refreshBtn');
+      const releaseAllBtn = document.getElementById('releaseAllBtn');
+      const releaseSelectedBtn = document.getElementById('releaseSelectedBtn');
+      const selectAllCheckbox = document.getElementById('selectAll');
+      
+      // Global variables
+      let overriddenPoints = [];
+      
+      // Helper function to show status messages
+      function showStatus(message, type) {
+        statusDiv.textContent = message;
+        statusDiv.className = `status ${type}`;
+      }
+      
+      // Helper function to format values for display
+      function formatValue(value) {
+        if (!value) return 'N/A';
+        if (value.getValue) return value.getValue().toString();
+        return value.toString();
+      }
+      
+      // Helper function to extract location from slot path
+      function extractLocation(slotPath) {
+        const parts = slotPath.split('/');
+        return parts.slice(0, -1).join(' → ');
+      }
+      
+      // Helper function to escape HTML
+      function escapeHtml(unsafe) {
+        if (!unsafe) return '';
+        return unsafe.toString()
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+      
+      // Function to toggle select all checkboxes
+      function toggleSelectAll(e) {
+        const checkboxes = document.querySelectorAll('#pointsBody input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+          checkbox.checked = e.target.checked;
+        });
+      }
+      
+      // Load all overridden points
+      async function loadOverriddenPoints() {
+        try {
+          showStatus('Loading overridden points...', 'info');
+          pointsTable.style.display = 'none';
+          
+          // Query that finds points with active overrides
+          const bqlQuery = "station:|slot:|bql:select displayName, out, overriddenValue, slotPath from control:ControlPoint where status.overridden = 'true'";
+          
+          const result = await baja.Ord.make(bqlQuery).get();
+          
+          if (!result || !result.cursor()) {
+            showStatus('No overridden points found.', 'info');
+            overriddenPoints = [];
+            renderPointsTable();
+            return;
+          }
+          
+          overriddenPoints = [];
+          await result.cursor({
+            each: (row) => {
+              try {
+                let slotPath = row.get("slotPath").toString();
+                
+                // Fix ORD format by removing local host references if present
+                if (slotPath.includes('|')) {
+                  slotPath = slotPath.split('|').pop();
+                }
+                
+                const point = {
+                  ord: slotPath,
+                  name: row.get("displayName")?.toString() || 'N/A',
+                  currentValue: formatValue(row.get("out")),
+                  overrideValue: formatValue(row.get("overriddenValue")),
+                  location: extractLocation(slotPath)
+                };
+                overriddenPoints.push(point);
+              } catch (error) {
+                console.error("Error processing row:", error);
+              }
+            },
+            limit: 1000
+          });
+          
+          showStatus(`Found ${overriddenPoints.length} overridden points`, 'success');
+          renderPointsTable();
+          
+        } catch (error) {
+          showStatus(`Error loading points: ${error.message}`, 'error');
+          console.error("Error loading overridden points:", error);
+        }
+      }
+      
+      // Render the points table
+      function renderPointsTable() {
+        pointsBody.innerHTML = '';
+        
+        if (overriddenPoints.length === 0) {
+          pointsTable.style.display = 'none';
+          releaseAllBtn.disabled = true;
+          releaseSelectedBtn.disabled = true;
+          return;
+        }
+        
+        overriddenPoints.forEach((point, index) => {
+          const row = document.createElement('tr');
+          
+          row.innerHTML = `
+            <td><input type="checkbox" id="point-${index}"></td>
+            <td>${escapeHtml(point.name)}</td>
+            <td>${escapeHtml(point.currentValue)}</td>
+            <td>${escapeHtml(point.location)}</td>
+            <td>
+              <button class="danger release-btn" data-ord="${escapeHtml(point.ord)}">
+                Release
+              </button>
+            </td>
+          `;
+          
+          pointsBody.appendChild(row);
+        });
+        
+        // Add event listeners to individual release buttons
+        document.querySelectorAll('.release-btn').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            const ord = e.target.getAttribute('data-ord');
+            const point = overriddenPoints.find(p => p.ord === ord);
+            
+            if (!confirm(`Release override for ${point.name}?`)) {
+              return;
+            }
+            
+            showStatus(`Releasing override for ${point.name}...`, 'info');
+            
+            try {
+              await releaseOverride(point.ord);
+              await loadOverriddenPoints();
+            } catch (error) {
+              console.error(`Error releasing single override:`, error);
+            }
+          });
+        });
+        
+        pointsTable.style.display = 'table';
+        releaseAllBtn.disabled = false;
+        releaseSelectedBtn.disabled = false;
+        selectAllCheckbox.checked = false;
+      }
+      
+      // Proper override release function
+      async function releaseOverride(ord) {
+        try {
+          // Clean up the ORD and build the full ordinal
+          let cleanOrd = ord;
+          if (ord.includes('|')) {
+            cleanOrd = ord.split('|').pop();
+          }
+          // Build full ordinal using the pipe
+          const fullOrd = "station:|" + cleanOrd;
+          console.log("Attempting to release override for:", fullOrd);
+          
+          // Resolve the point
+          const point = await baja.Ord.make(fullOrd).get();
+          if (!point || typeof point.invoke !== 'function') {
+            throw new Error("Resolved object is not a point or does not support 'invoke'");
+          }
+          
+          // Create an override value for 'auto'
+          const overrideVal = baja.$("control:Override", {
+            value: 'auto',
+            duration: baja.RelTime.make({ seconds: 0 }) // Immediate release
+          });
+          
+          // Invoke the auto action on the point to release the override
+          return point.invoke({
+            slot: 'auto',
+            value: overrideVal
+          });
+          
+        } catch (error) {
+          console.error(`Error releasing override for ${ord}`, error);
+          throw error;
+        }
+      }
+
+      
+      // Helper function to release multiple overrides
+      async function releaseOverrides(points) {
+        try {
+          showStatus(`Releasing ${points.length} overrides...`, 'info');
+          releaseAllBtn.disabled = true;
+          releaseSelectedBtn.disabled = true;
+          
+          let successCount = 0;
+          let failCount = 0;
+          
+          for (const point of points) {
+            try {
+              await releaseOverride(point.ord);
+              successCount++;
+            } catch (error) {
+              failCount++;
+              console.error(`Error releasing override for ${point.ord}`, error);
+            }
+          }
+          
+          showStatus(
+            `Released ${successCount} overrides successfully. ${failCount} failed.`,
+            failCount > 0 ? 'error' : 'success'
+          );
+          
+          // Refresh the list
+          await loadOverriddenPoints();
+          
+        } catch (error) {
+          showStatus(`Error releasing overrides: ${error.message}`, 'error');
+          console.error("Error releasing overrides:", error);
+        } finally {
+          releaseAllBtn.disabled = false;
+          releaseSelectedBtn.disabled = overriddenPoints.length === 0;
+        }
+      }
+      
+      // Release all overrides
+      async function releaseAllOverrides() {
+        if (!confirm(`Are you sure you want to release ALL ${overriddenPoints.length} overrides?`)) {
+          return;
+        }
+        
+        await releaseOverrides(overriddenPoints);
+      }
+      
+      // Release selected overrides
+      async function releaseSelectedOverrides() {
+        const selectedPoints = overriddenPoints.filter(
+          (_, index) => document.getElementById(`point-${index}`).checked
+        );
+        
+        if (selectedPoints.length === 0) {
+          showStatus('No points selected', 'error');
+          return;
+        }
+        
+        if (!confirm(`Release ${selectedPoints.length} selected overrides?`)) {
+          return;
+        }
+        
+        await releaseOverrides(selectedPoints);
+      }
+      
+      // Initialize the page
+      function init() {
+        refreshBtn.addEventListener('click', loadOverriddenPoints);
+        releaseAllBtn.addEventListener('click', releaseAllOverrides);
+        releaseSelectedBtn.addEventListener('click', releaseSelectedOverrides);
+        selectAllCheckbox.addEventListener('change', toggleSelectAll);
+        
+        loadOverriddenPoints();
+      }
+      
+      // Start the application
+      init();
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<!-- @noSnoop -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Equipment & Component Graphic Builder</title>
+  
+  <!-- Niagara's default RequireJS configuration extended with our custom settings -->
+  <script type="text/javascript">
+    var require = {
+      paths: {
+        "nmodule": "/module",
+        "baja": "/module/bajaScript/rc/plugin/baja",
+        "bajaScript": "/module/bajaScript/rc",
+        "bajaux": "/module/bajaux/rc",
+        "lex": "/module/js/rc/lex/lexplugin",
+        "log": "/module/js/rc/log/logPlugin",
+        "css": "/module/js/com/tridium/js/ext/require/css",
+        "Handlebars": "/module/js/rc/handlebars/handlebars",
+        "Promise": "/module/js/rc/bluebird/bluebird",
+        "hbs": "/module/js/rc/require-handlebars-plugin/hbs",
+        "i18nprecompile": "/module/js/rc/require-handlebars-plugin/hbs/i18nprecompile",
+        "json2": "/module/js/rc/require-handlebars-plugin/hbs/json2",
+        "underscore": "/module/js/rc/underscore/underscore",
+        // Add jQuery and jQuery UI paths:
+        "jquery": "/module/Beau/resources/js/jquery.min",
+        "jquery-ui": "/module/Beau/resources/js/jquery-ui.min"
+      },
+      shim: {
+        "jquery-ui": { deps: ["jquery"] }
+      },
+      hbs: { disableI18n: true }
+    }
+  </script>
+  
+  <!-- Include the jQuery UI CSS (and a jQuery UI theme if needed) -->
+  <link rel="stylesheet" href="/module/Beau/resources/css/jquery-ui.min.css" type="text/css" />
+  <link rel="stylesheet" href="https://code.jquery.com/ui/1.13.0/themes/smoothness/jquery-ui.css" />
+  
+  <style>
+    body { font-family: Arial, sans-serif; }
+    .selector-panel, .component-panel {
+      margin: 20px 0; 
+      padding: 10px; 
+      border: 1px solid #ccc; 
+      width: 300px;
+    }
+    .graphic-container {
+      position: relative; 
+      width: 1000px; 
+      height: 400px;
+      background-color: #f0f0f0; 
+      border: 1px solid #ccc; 
+      margin-top: 20px;
+    }
+    .graphic-container img { 
+      position: absolute; 
+      height: 90px; 
+    }
+    .graphic-label {
+      position: absolute; 
+      font-size: 12px; 
+      color: #333; 
+      background: rgba(255,255,255,0.8);
+      padding: 2px 4px; 
+      border: 1px solid #ccc; 
+      border-radius: 3px;
+    }
+    button { margin: 10px 0; padding: 5px 10px; }
+  </style>
+</head>
+<body>
+  <h2>Equipment & Component Graphic Builder</h2>
+
+  <!-- Equipment Selector -->
+  <div class="selector-panel">
+    <label for="equipment">Select Equipment:</label>
+    <select id="equipment">
+      <option value="">Loading equipment...</option>
+    </select>
+    <br>
+    <button id="saveConfigBtn" type="button">Save Configuration to Station</button>
+  </div>
+
+  <!-- Component Selector -->
+  <div class="component-panel" id="componentPanel" style="display:none;">
+    <p>Select Components to include in the graphic:</p>
+    <form id="componentForm">
+      <!-- Each row will include a checkbox and an Edit Label button -->
+    </form>
+    <button id="buildGraphicBtn" type="button">Build Graphic</button>
+  </div>
+
+  <!-- Graphic Container -->
+  <div class="graphic-container" id="graphicContainer">
+    <!-- The built graphic and labels will be rendered here -->
+  </div>
+  
+  <!-- Container for label editor dialog -->
+  <div id="labelEditorDialog" title="Edit Label" style="display:none;">
+    <form id="labelEditorForm">
+      <label for="labelText">Label Text:</label>
+      <input type="text" id="labelText" style="width: 100%;" />
+    </form>
+  </div>
+  
+  <!-- Container for point value dialog -->
+  <div id="pointValueDialog" title="Current Point Value" style="display:none;"></div>
+  
+  <!-- Load RequireJS itself -->
+  <script type="text/javascript" src="/module/js/com/tridium/js/ext/require/require.js"></script>
+  
+  <!-- Module Code -->
+  <script type="text/javascript">
+    require(['jquery', 'jquery-ui', 'baja!'], function($, jqueryUI, baja) {
+      "use strict";
+      console.log('jQuery and jQuery UI are loaded successfully.');
+      
+      // Base SVG mapping with defaults.
+      var svgMapping = {
+        fan: {
+          url: '/ord/module://kitPxN4svg/Fans/Fans_Horz/Fans_Horz_Left/Fans_Horz_Left_Off.svg',
+          pos: { top: '50%', left: '130px', transform: 'translateY(-50%)' }
+        },
+        duct: {
+          url: '/ord/module://kitPxN4svg/Ductwork/Duct_Horz_Long.svg',
+          pos: { top: '50%', left: '260px', transform: 'translateY(-50%)' }
+        },
+        dat: {
+          url: '/ord/module://kitPxN4svg/Sensors/sensor_duct_avgtemp_top.svg',
+          pos: { top: '48%', left: '310px', transform: 'translateY(-50%)' }
+        },
+        hwv: {
+          url: '/ord/module://kitPxN4svg/Coils/Coils_Heating/Coils_Heating_0.svg',
+          pos: { top: '50%', left: '450px', transform: 'translateY(-50%)' }
+        },
+        cooling: {
+          url: '/ord/module://kitPxN4svg/Coils/Coils_Cooling_DX_1Stg/Coils_Cooling_DX_1Stg_On.svg',
+          pos: { top: '50%', left: '460px', transform: 'translateY(-50%)' }
+        },
+        chiller: {
+          url: '/ord/module://kitPxN4svg/Chillers/Chiller_AirCooled/Chiller_AirCooled_On.svg',
+          pos: { top: '50%', left: '425px', transform: 'translateY(-50%)' }
+        },
+        damper: {
+          url: '/ord/module://kitPxN4svg/Dampers/Damper_Horz_Parallel/Damper_Horz_Parallel_0.svg',
+          pos: { top: '50%', left: '395px', transform: 'translateY(-50%)' }
+        }
+      };
+      
+      // Global objects for storing positions, label settings, and detected points.
+      window.currentPositions = window.currentPositions || {};
+      window.userLabels = window.userLabels || {};  // Format: { key: { display: "Custom text", value: "Initial value" } }
+      window.detectedPoints = []; // Will store the original point names.
+      
+      // Helper: Convert numeric values to CSS strings.
+      function toCssValue(val) {
+        return typeof val === "number" ? val + "px" : val;
+      }
+      
+      // Helper: Construct full ORD for a subordinate point.
+      function getPointOrd(equipmentOrd, pointKey, actualName) {
+        console.log("getPointOrd: Received equipmentOrd:", equipmentOrd, "and pointKey:", pointKey, "and actualName:", actualName);
+        if (equipmentOrd.indexOf("station:|") !== 0) {
+          console.warn("Equipment ORD did not start with 'station:|'. Prepending it.");
+          equipmentOrd = "station:|" + equipmentOrd;
+        }
+        var finalName = actualName || pointKey;
+        var fullOrd = equipmentOrd + "/" + finalName;
+        console.log("Constructed point ORD:", fullOrd);
+        return fullOrd;
+      }
+      
+      // STEP 1: Populate Equipment Dropdown
+      function updateEquipmentDropdown() {
+        var equipmentDropdown = document.getElementById("equipment");
+        if (!equipmentDropdown) {
+          console.error("Dropdown not found.");
+          return;
+        }
+        var tagsToFind = ['n:ahu', 'n:chiller', 'n:rtu', 'n:lighting'];
+        var neqlQuery = `station:|slot:|neql:${tagsToFind.join(' or ')}|bql:select displayName, slotPathOrd`;
+        console.log("Running NEQL Query:", neqlQuery);
+      
+        baja.Ord.make(neqlQuery)
+          .get()
+          .then(function(result) {
+            if (!result || !result.cursor()) {
+              equipmentDropdown.innerHTML = "<option value=''>No Equipment Found</option>";
+              return;
+            }
+            equipmentDropdown.innerHTML = "";
+            var equipmentOptions = [];
+            result.cursor({
+              each: function(row) {
+                try {
+                  var displayName = row.get("displayName");
+                  var ord = row.get("slotPathOrd").toString();
+                  console.log("Found equipment:", displayName, "with ORD:", ord);
+                  equipmentOptions.push({ displayName: displayName, ord: ord });
+                } catch (error) {
+                  console.error("Error processing row:", error);
+                }
+              },
+              after: function() {
+                if (equipmentOptions.length === 0) {
+                  equipmentDropdown.innerHTML = "<option value=''>No Equipment Found</option>";
+                  return;
+                }
+                equipmentOptions.sort(function(a, b) {
+                  return a.displayName.localeCompare(b.displayName);
+                });
+                equipmentOptions.forEach(function(option) {
+                  var optionElement = document.createElement("option");
+                  optionElement.value = option.ord;
+                  optionElement.textContent = option.displayName;
+                  equipmentDropdown.appendChild(optionElement);
+                });
+              },
+              limit: 100
+            });
+          })
+          .catch(function(error) {
+            console.error("Error executing NEQL query:", error);
+            equipmentDropdown.innerHTML = "<option value=''>Error Loading Data</option>";
+          });
+      }
+      
+      // STEP 2: Update Component Selector (with Edit Label buttons)
+      function updateComponentsList(equipmentOrd) {
+        var componentPanel = document.getElementById("componentPanel");
+        var componentForm = document.getElementById("componentForm");
+        componentForm.innerHTML = "";
+        componentPanel.style.display = "block";
+      
+        var bqlQuery = `station:|${equipmentOrd}|bql:select displayName,out from control:ControlPoint`;
+        console.log("Running BQL Query for components:", bqlQuery);
+      
+        baja.Ord.make(bqlQuery)
+          .get()
+          .then(function(result) {
+            if (!result || !result.cursor()) {
+              componentForm.innerHTML = "<p>No components found.</p>";
+              return;
+            }
+            var availableComponents = {};
+            result.cursor({
+              each: function(row) {
+                try {
+                  var originalName = row.get("displayName");
+                  var lowerName = originalName.toLowerCase();
+                  Object.keys(svgMapping).forEach(function(key) {
+                    if (lowerName.indexOf(key) !== -1) {
+                      availableComponents[key] = originalName; // Store original case.
+                    }
+                  });
+                } catch (error) {
+                  console.error("Error processing component:", error);
+                }
+              },
+              after: function() {
+                if (Object.keys(availableComponents).length === 0) {
+                  componentForm.innerHTML = "<p>No known components found.</p>";
+                  return;
+                }
+                Object.keys(availableComponents).forEach(function(key) {
+                  var $row = $("<div>").css({ "margin-bottom": "5px" });
+                  var $checkbox = $('<input type="checkbox" name="component" value="' + key + '" checked />');
+                  var $label = $("<span>").text(" " + availableComponents[key] + " ");
+                  // Add an "Edit Label" button.
+                  var $editButton = $('<button type="button">Edit Label</button>').css({ "margin-left": "10px" });
+                  $editButton.on("click", function() {
+                    // Pass both the mapping key and the original point name.
+                    showPointValueAndLabelEditor(equipmentOrd, { key: key, original: availableComponents[key] });
+                  });
+                  $row.append($checkbox).append($label).append($editButton);
+                  $("#componentForm").append($row);
+                });
+              }
+            });
+          })
+          .catch(function(error) {
+            console.error("Error executing BQL query:", error);
+            componentForm.innerHTML = "<p>Error loading components.</p>";
+          });
+      }
+      
+      // STEP 3: Label Editor Dialog that shows the current point value and allows editing the label.
+      function showPointValueAndLabelEditor(equipmentOrd, compInfo) {
+        var componentKey = compInfo.key;
+        var actualName = compInfo.original;
+        var pointOrd = getPointOrd(equipmentOrd, componentKey, actualName);
+        if (!pointOrd) {
+          alert("Invalid point ORD for " + componentKey);
+          return;
+        }
+        
+        var $dialog = $("#pointValueDialog");
+        if (!$dialog.length) {
+          $dialog = $('<div id="pointValueDialog" title="Edit Label for ' + componentKey + '"></div>').appendTo("body");
+        }
+        $dialog.empty();
+        
+        // We'll display two items:
+        // 1. A read-only display for the current out.value.
+        // 2. An input for the custom display label.
+        var $valueDisplay = $("<p>").text("Loading current value...");
+        var $valueLabel = $("<p>").attr("id", "currentValueLabel").css({
+          "font-weight": "bold",
+          "margin-bottom": "10px"
+        });
+        var $labelInput = $('<input type="text" id="labelInput" style="width:100%;" placeholder="Enter custom display label">');
+        $dialog.append($valueDisplay)
+               .append($valueLabel)
+               .append("<label for='labelInput'>Display Label:</label>")
+               .append($labelInput);
+        
+        $dialog.dialog({
+          modal: true,
+          width: 350,
+          buttons: {
+            "Save Label": function() {
+              var customLabel = $labelInput.val().trim();
+              if (!window.userLabels) {
+                window.userLabels = {};
+              }
+              window.userLabels[componentKey] = { 
+                display: customLabel,
+                value: $valueLabel.text()
+              };
+              console.log("Updated label for", componentKey, ":", window.userLabels[componentKey]);
+              $(this).dialog("close");
+            },
+            Cancel: function() {
+              $(this).dialog("close");
+            }
+          }
+        });
+        
+        // Retrieve the current point value (one-time read).
+        baja.Ord.make(pointOrd)
+          .get()
+          .then(function(point) {
+            var currentValue = point.getOut().getValue();
+            $valueDisplay.text("Current value for " + componentKey + " is:");
+            $valueLabel.text(currentValue);
+          })
+          .catch(function(err) {
+            console.error("Error retrieving point value for:", pointOrd, err);
+            $valueDisplay.text("Error retrieving point value.");
+            $valueLabel.text("N/A");
+          });
+      }
+      
+      // STEP 4: Build the Graphic from Configuration
+      function buildGraphicFromConfig(config) {
+        var container = document.getElementById("graphicContainer");
+        container.innerHTML = "";
+        var components = config.components;
+        if (!components.find(function(c){ return c.key === "duct"; })) {
+          components.push({ key: "duct", position: svgMapping["duct"].pos });
+        }
+        components.sort(function(a, b) {
+          if (a.key === "duct") return -1;
+          if (b.key === "duct") return 1;
+          return 0;
+        });
+        console.log("Building graphic for equipment:", config.equipment, "with components:", components);
+        components.forEach(function(comp) {
+          var key = comp.key;
+          if (svgMapping[key] && svgMapping[key].url) {
+            var img = document.createElement("img");
+            img.src = svgMapping[key].url;
+            var pos = comp.position || svgMapping[key].pos;
+            img.style.top = toCssValue(pos.top);
+            img.style.left = toCssValue(pos.left);
+            if (pos.transform) { img.style.transform = pos.transform; }
+            img.style.zIndex = (key === "duct") ? 1 : 2;
+            img.setAttribute("data-key", key);
+            container.appendChild(img);
+            if (window.userLabels && window.userLabels[key] && window.userLabels[key].display) {
+              var $displayLabel = $("<div class='graphic-label display-label'>").text(window.userLabels[key].display);
+              $displayLabel.data("key", key);
+              $displayLabel.css({
+                top: toCssValue(parseInt(pos.top) + 95),
+                left: toCssValue(pos.left)
+              });
+              $("#graphicContainer").append($displayLabel);
+              var $valueLabel = $("<div class='graphic-label value-label'>").text(window.userLabels[key].value || "");
+              $valueLabel.data("key", key);
+              $valueLabel.css({
+                top: toCssValue(parseInt(pos.top) + 120),
+                left: toCssValue(pos.left)
+              });
+              $("#graphicContainer").append($valueLabel);
+            }
+          } else {
+            console.log("No SVG mapping for key:", key);
+          }
+        });
+        $(".graphic-container img").draggable({
+          containment: ".graphic-container",
+          stop: function(event, ui) {
+            var key = $(this).data("key");
+            if (key) {
+              window.currentPositions = window.currentPositions || {};
+              window.currentPositions[key] = ui.position;
+              console.log("Recorded new position for", key, ":", ui.position);
+            }
+          }
+        });
+        $(".graphic-label").draggable({
+          containment: ".graphic-container",
+          stop: function(event, ui) {
+            var key = $(this).data("key");
+            console.log("Label moved to:", ui.position);
+          }
+        });
+      }
+      
+      // STEP 5: Save Configuration (Merge user positions and label settings)
+      function saveConfigurationToStation() {
+        var equipmentDropdown = document.getElementById("equipment");
+        var selectedEquipment = equipmentDropdown.value;
+        if (!selectedEquipment) {
+          alert("Please select an equipment.");
+          return;
+        }
+        var fullEquipmentOrd = selectedEquipment.indexOf("station:|") === 0
+          ? selectedEquipment : "station:|" + selectedEquipment;
+      
+        var selectedComponents = Array.from(
+          document.querySelectorAll('input[name="component"]:checked')
+        ).map(function(el) { return el.value; });
+        if (!selectedComponents.includes("duct")) {
+          selectedComponents.push("duct");
+        }
+      
+        var componentsConfig = selectedComponents.map(function(key) {
+          var defaultPos = svgMapping[key] ? svgMapping[key].pos : {};
+          var userPos = (window.currentPositions && window.currentPositions[key]) || {};
+          var labelConfig = window.userLabels && window.userLabels[key] ? window.userLabels[key] : {};
+          return {
+            key: key,
+            position: {
+              top: userPos.top || defaultPos.top,
+              left: userPos.left || defaultPos.left,
+              transform: userPos.transform || defaultPos.transform
+            },
+            label: labelConfig
+          };
+        });
+      
+        var config = {
+          equipment: fullEquipmentOrd,
+          components: componentsConfig,
+          timestamp: new Date().toISOString()
+        };
+      
+        var configJSON = JSON.stringify(config);
+        console.log("Configuration to save:", configJSON);
+      
+        baja.Ord.make(fullEquipmentOrd)
+          .get()
+          .then(function(ahuFolder) {
+            return ahuFolder.add({
+              slot: "graphicConfig",
+              value: baja.$("baja:String", configJSON),
+              flags: baja.Flags.SUMMARY
+            });
+          })
+          .then(function(newProp) {
+            alert("Configuration saved to station as property: " + newProp.getName());
+          })
+          .catch(function(err) {
+            console.error("Error saving configuration to station:", err);
+            alert("Error saving configuration to station: " + err);
+          });
+      }
+      
+      // ---------------------------------------------------------------------
+      // Event Bindings
+      $("#saveConfigBtn").on("click", function() {
+        saveConfigurationToStation();
+      });
+      
+      $("#buildGraphicBtn").on("click", function() {
+        var equipmentDropdown = document.getElementById("equipment");
+        var selectedEquipment = equipmentDropdown.value;
+        if (!selectedEquipment) {
+          alert("Please select equipment.");
+          return;
+        }
+        var fullEquipmentOrd = selectedEquipment.indexOf("station:|") === 0
+          ? selectedEquipment : "station:|" + selectedEquipment;
+      
+        var selectedComponents = Array.from(
+          document.querySelectorAll('input[name="component"]:checked')
+        ).map(function(el) { return el.value; });
+        if (!selectedComponents.includes("duct")) {
+          selectedComponents.push("duct");
+        }
+      
+        var tempConfig = {
+          equipment: fullEquipmentOrd,
+          components: selectedComponents.map(function(key) {
+            return { key: key, position: svgMapping[key] ? svgMapping[key].pos : {} };
+          }),
+          timestamp: new Date().toISOString()
+        };
+        buildGraphicFromConfig(tempConfig);
+      });
+      
+      $("#equipment").on("change", function() {
+        var selectedOrd = this.value;
+        if (selectedOrd) {
+          updateComponentsList(selectedOrd);
+          $("#graphicContainer").empty();
+        }
+      });
+      
+      // Initialization: Populate equipment dropdown.
+      updateEquipmentDropdown();
+      
+    });
+  </script>
+</body>
+</html>

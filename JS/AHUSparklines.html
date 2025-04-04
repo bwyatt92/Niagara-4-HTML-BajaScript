@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<!-- @noSnoop -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multiple AHU Sparklines</title>
+  
+
+  
+  <!-- Custom RequireJS configuration -->
+  <script type="text/javascript">
+    var require = {
+      paths: {
+        "jquery": "/module/Beau/resources/js/jquery.min",
+        "d3": "/module/Beau/resources/js/d3.min",
+        "dayjs": "/module/Beau/resources/js/dayjs/dayjs.min",
+        "lodash": "/module/Beau/resources/js/lodash/lodash.min",
+        "baja": "/module/bajaScript/rc/plugin/baja"
+      },
+      shim: {
+        "d3": { exports: "d3" },
+        "lodash": { exports: "_" }
+      }
+    };
+  </script>
+  <!-- Niagara default config and require -->
+  <script type="text/javascript" src="/requirejs/config.js"></script>
+  <script type="text/javascript" src="/module/js/com/tridium/js/ext/require/require.min.js"></script>
+  
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background: #f5f5f5;
+    }
+    
+    /* A container for all cards in a responsive grid */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 15px;
+    }
+    
+    /* Card styling */
+    .card {
+      background: #fff;
+      border-radius: 5px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      overflow: hidden;
+      position: relative;
+      transition: transform 0.2s;
+    }
+    .card:hover {
+      transform: scale(1.02);
+    }
+    
+    /* Card header with AHU name */
+    .card-header {
+      background: #e9f5ff;
+      padding: 8px;
+      border-bottom: 1px solid #b8d8f8;
+      font-weight: bold;
+    }
+    
+    /* Card body is small by default */
+    .card-body {
+      padding: 8px;
+      height: 60px;         /* Small initial height */
+      overflow: hidden;     /* Hide the sparkline initially */
+      transition: height 0.3s;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    
+    /* On hover, the card body expands to show sparkline */
+    .card:hover .card-body {
+      height: 150px; /* Adjust as needed for sparkline size */
+    }
+    
+    /* Container for the sparkline */
+    .sparkline-container {
+      width: 100%;
+      height: 60px; /* Enough room to display the sparkline when expanded */
+      margin-top: 8px;
+    }
+    
+    /* Current value label */
+    .current-value {
+      font-size: 14px;
+      font-weight: normal;
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>AHU SpaceTemp Sparklines</h1>
+  
+  <!-- Grid to hold multiple AHU cards -->
+  <div class="card-grid">
+    <!-- We’ll create one card per AHU (1–5) -->
+    <div class="card" id="ahu1-card">
+      <div class="card-header">AHU 1 SpaceTemp</div>
+      <div class="card-body">
+        <p class="current-value" id="ahu1-value">-- °C</p>
+        <div class="sparkline-container" id="ahu1-sparkline"></div>
+      </div>
+    </div>
+    
+    <div class="card" id="ahu2-card">
+      <div class="card-header">AHU 2 SpaceTemp</div>
+      <div class="card-body">
+        <p class="current-value" id="ahu2-value">-- °C</p>
+        <div class="sparkline-container" id="ahu2-sparkline"></div>
+      </div>
+    </div>
+    
+    <div class="card" id="ahu3-card">
+      <div class="card-header">AHU 3 SpaceTemp</div>
+      <div class="card-body">
+        <p class="current-value" id="ahu3-value">-- °C</p>
+        <div class="sparkline-container" id="ahu3-sparkline"></div>
+      </div>
+    </div>
+    
+    <div class="card" id="ahu4-card">
+      <div class="card-header">AHU 4 SpaceTemp</div>
+      <div class="card-body">
+        <p class="current-value" id="ahu4-value">-- °C</p>
+        <div class="sparkline-container" id="ahu4-sparkline"></div>
+      </div>
+    </div>
+    
+    <div class="card" id="ahu5-card">
+      <div class="card-header">AHU 5 SpaceTemp</div>
+      <div class="card-body">
+        <p class="current-value" id="ahu5-value">-- °C</p>
+        <div class="sparkline-container" id="ahu5-sparkline"></div>
+      </div>
+    </div>
+  </div>
+  
+  <script type="text/javascript">
+    require(['jquery', 'd3', 'dayjs', 'lodash', 'baja!'], function($, d3, dayjs, _, baja) {
+      // BQL queries for each AHU. Adjust these to match your actual point names.
+      // If each AHU has a different history, update the queries accordingly.
+      var queries = {
+        ahu1: "history:/GPG/AHU1_SpaceTemp?|bql:select timestamp, value",
+        ahu2: "history:/GPG/AHU2_SpaceTemp?|bql:select timestamp, value",
+        ahu3: "history:/GPG/AHU3_SpaceTemp?|bql:select timestamp, value",
+        ahu4: "history:/GPG/AHU4_SpaceTemp?|bql:select timestamp, value",
+        ahu5: "history:/GPG/AHU5_SpaceTemp?|bql:select timestamp, value"
+      };
+      
+      // Generic fetch function that returns an array of {timestamp, value}
+      async function fetchHistoricalData(bqlQuery) {
+        try {
+          const result = await baja.Ord.make(bqlQuery).get();
+          const data = [];
+          if (result && typeof result.cursor === "function") {
+            await result.cursor({
+              each: function(row) {
+                data.push({
+                  timestamp: row.get("timestamp")?.toString() || "",
+                  value: row.get("value")?.toString() || ""
+                });
+              },
+              limit: 500
+            });
+          }
+          return data;
+        } catch (error) {
+          console.error("Error fetching data for query:", bqlQuery, error);
+          return [];
+        }
+      }
+      
+      // Renders the sparkline for a given container
+      function renderSparkline(containerId, dataArray) {
+        var container = d3.select("#" + containerId);
+        container.select("svg").remove(); // Clear any existing chart
+        
+        var width = container.node().getBoundingClientRect().width;
+        var height = container.node().getBoundingClientRect().height;
+        
+        var svg = container.append("svg")
+                           .attr("width", width)
+                           .attr("height", height);
+        
+        // Convert values to numbers
+        var yValues = dataArray.map(d => Number(d.value));
+        if (yValues.length === 0) return; // No data
+        
+        var xScale = d3.scaleLinear()
+                       .domain([0, yValues.length - 1])
+                       .range([0, width]);
+        
+        var yExtent = d3.extent(yValues);
+        var yPadding = (yExtent[1] - yExtent[0]) * 0.1;
+        var yScale = d3.scaleLinear()
+                       .domain([yExtent[0] - yPadding, yExtent[1] + yPadding])
+                       .range([height, 0]);
+        
+        var line = d3.line()
+                     .x((d, i) => xScale(i))
+                     .y(d => yScale(Number(d.value)))
+                     .curve(d3.curveBasis);
+        
+        svg.append("path")
+           .datum(dataArray)
+           .attr("d", line)
+           .attr("stroke", "steelblue")
+           .attr("stroke-width", 2)
+           .attr("fill", "none");
+        
+        // Circle at last data point
+        var lastIndex = dataArray.length - 1;
+        var lastVal = Number(dataArray[lastIndex].value);
+        svg.append("circle")
+           .attr("cx", xScale(lastIndex))
+           .attr("cy", yScale(lastVal))
+           .attr("r", 3)
+           .attr("fill", "steelblue");
+      }
+      
+      // Updates the card for a single AHU
+      async function updateCard(ahuKey) {
+        // 1. Fetch the data
+        var data = await fetchHistoricalData(queries[ahuKey]);
+        if (data.length === 0) {
+          console.warn("No data for", ahuKey);
+          return;
+        }
+        
+        // 2. Display the most recent value
+        var lastPoint = data[data.length - 1];
+        var lastVal = Number(lastPoint.value).toFixed(1); // Round to 1 decimal
+        $("#"+ahuKey+"-value").text(lastVal + " °F");
+        
+        // 3. Render the sparkline
+        renderSparkline(ahuKey+"-sparkline", data);
+      }
+      
+      // Call updateCard for each AHU (1–5)
+      updateCard("ahu1");
+      updateCard("ahu2");
+      updateCard("ahu3");
+      updateCard("ahu4");
+      updateCard("ahu5");
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<!-- @noSnoop -->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equipment Selector</title>
+    <script type='text/javascript' src='/requirejs/config.js'></script>
+    <script type='text/javascript' src='/module/js/com/tridium/js/ext/require/require.min.js'></script>
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f0f0f0;
+        }
+    </style>
+</head>
+<body>
+    <h2>Equipment Selector</h2>
+    
+    <label for="equipment">Select Equipment:</label>
+    <select id="equipment">
+        <option value="">Loading...</option>
+    </select>
+
+    <!-- Table to display points -->
+    <table id="pointsTable">
+        <thead>
+            <tr>
+                <th>Point Name</th>
+                <th>Point Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Rows will be dynamically added here -->
+        </tbody>
+    </table>
+
+    <script>
+        // Fetch equipment and update the dropdown
+require(['baja!'], function (baja) {
+    "use strict";
+
+    function updateEquipmentDropdown() {
+    console.log("🚀 Starting updateEquipmentDropdown()...");
+
+    var equipmentDropdown = document.getElementById("equipment");
+    if (!equipmentDropdown) {
+        console.error("❌ Dropdown not found.");
+        return;
+    }
+
+    var equipmentList = [];
+    var tagsToFind = ['n:ahu', 'n:chiller', 'n:rtu', 'n:lighting'];
+
+    console.log("🔍 Running NEQL query to find folders...");
+
+    // Build the NEQL query to find folders with the specified tags
+    const neqlQuery = `station:|slot:|neql:${tagsToFind.join(' or ')}|bql:select displayName, slotPathOrd`;
+    console.log("🔍 NEQL Query:", neqlQuery);
+
+    // Fetch folders with the specified tags
+    baja.Ord.make(neqlQuery)
+        .get()
+        .then(function (result) {
+            console.log("✅ NEQL Query Result:", result);
+
+            if (!result || !result.cursor()) {
+                console.warn("⚠️ No rows returned by the NEQL query.");
+                equipmentDropdown.innerHTML = "<option value=''>No Equipment Found</option>";
+                return;
+            }
+
+            // Clear the dropdown (remove the "Loading..." option)
+            equipmentDropdown.innerHTML = "";
+
+            var equipmentOptions = [];
+
+            // Use the cursor method to iterate through the rows
+            result.cursor({
+                before: function () {
+                    console.log("🔍 Starting to process rows...");
+                },
+                each: function (row) {
+                    try {
+                        var displayName = row.get("displayName");
+                        var ord = row.get("slotPathOrd").toString();
+                        console.log(`🔹 Found: ${displayName} at ${ord}`);
+
+                        // Add the result to the equipment options array
+                        equipmentOptions.push({ displayName: displayName, ord: ord });
+                    } catch (error) {
+                        console.error("❌ Error processing row:", error);
+                    }
+                },
+                after: function () {
+                    console.log("🔍 Finished processing rows.");
+
+                    if (equipmentOptions.length === 0) {
+                        console.warn("⚠️ No matching equipment found.");
+                        equipmentDropdown.innerHTML = "<option value=''>No Equipment Found</option>";
+                        return;
+                    }
+
+                    // Sort the options alphabetically by display name
+                    equipmentOptions.sort(function (a, b) {
+                        return a.displayName.localeCompare(b.displayName);
+                    });
+
+                    // Populate the dropdown with sorted options
+                    equipmentOptions.forEach(function (option) {
+                        var optionElement = document.createElement("option");
+                        optionElement.value = option.ord;
+                        optionElement.textContent = option.displayName;
+                        equipmentDropdown.appendChild(optionElement);
+                    });
+
+                    // Trigger the points table update for the first option
+                    updatePointsTable(equipmentOptions[0].ord);
+                },
+                limit: 100 // Increase the limit to retrieve more rows
+            });
+        })
+        .catch(function (error) {
+            console.error("❌ Error executing NEQL query:", error);
+            equipmentDropdown.innerHTML = "<option value=''>Error Loading Data</option>";
+        });
+}
+
+
+    function updatePointsTable(equipmentOrd) {
+        console.log("🔍 Fetching points for equipment:", equipmentOrd);
+
+        // Clear the existing table rows
+        var tableBody = document.querySelector("#pointsTable tbody");
+        tableBody.innerHTML = "";
+
+        // Build the BQL query to fetch points under the selected equipment
+        const bqlQuery = `station:|${equipmentOrd}|bql:select displayName,out from control:ControlPoint`;
+        console.log("🔍 BQL Query:", bqlQuery);
+
+        // Fetch points under the selected equipment
+        baja.Ord.make(bqlQuery)
+            .get()
+            .then(function (result) {
+                console.log("✅ BQL Query Result:", result);
+
+                if (!result || !result.cursor()) {
+                    console.warn("⚠️ No points found for the selected equipment.");
+                    return;
+                }
+
+                // Use the cursor method to iterate through the rows
+                result.cursor({
+                    each: function (row) {
+                        try {
+                            var displayName = row.get("displayName");
+                            var pointValue = row.get("out").getValue();
+                            console.log(`🔹 Found Point: ${displayName}, Value: ${pointValue}`);
+
+                            // Add the point to the table
+                            var newRow = document.createElement("tr");
+                            newRow.innerHTML = `
+                                <td>${displayName}</td>
+                                <td>${pointValue}</td>
+                            `;
+                            tableBody.appendChild(newRow);
+                        } catch (error) {
+                            console.error("❌ Error processing point:", error);
+                        }
+                    }
+                });
+            })
+            .catch(function (error) {
+                console.error("❌ Error executing BQL query:", error);
+            });
+    }
+
+    // Initialize the dropdown
+    console.log("📌 Waiting for BajaScript to be ready...");
+    updateEquipmentDropdown();
+
+    // Add event listener to the dropdown
+    var equipmentDropdown = document.getElementById("equipment");
+    equipmentDropdown.addEventListener("change", function (event) {
+        var selectedOrd = event.target.value;
+        if (selectedOrd) {
+            updatePointsTable(selectedOrd);
+        } else {
+            // Clear the table if no equipment is selected
+            var tableBody = document.querySelector("#pointsTable tbody");
+            tableBody.innerHTML = "";
+        }
+    });
+});
+
+    </script>
+</body>
+</html>

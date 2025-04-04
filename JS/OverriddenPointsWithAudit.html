@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<!-- @noSnoop -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Override Release Console</title>
+  <script type="text/javascript" src="/requirejs/config.js"></script>
+  <script type="text/javascript" src="/module/js/com/tridium/js/ext/require/require.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+    th { background-color: #f2f2f2; position: sticky; top: 0; }
+    tr:nth-child(even) { background-color: #f9f9f9; }
+    tr:hover { background-color: #f1f1f1; }
+    button { 
+      margin: 5px; 
+      padding: 10px 15px; 
+      font-size: 14px; 
+      cursor: pointer;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+    }
+    button:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    button.danger {
+      background-color: #f44336;
+    }
+    .status {
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 4px;
+    }
+    .success { background-color: #dff0d8; color: #3c763d; }
+    .error { background-color: #f2dede; color: #a94442; }
+    .info { background-color: #d9edf7; color: #31708f; }
+    .loading { color: #666; font-style: italic; }
+    .actions { margin: 20px 0; }
+    /* Simple header styling */
+    .header {
+      display: flex;           /* Put the logo and heading in a row */
+      align-items: center;     /* Vertically center them */
+      border-bottom: 2px solid #ddd;
+      padding: 10px;
+      margin-bottom: 20px;
+      background-color: #fff;  /* Optional: give it a background */
+    }
+    .header img {
+      height: 50px;           /* Control the logo height */
+      margin-right: 15px;     /* Space between logo and heading */
+    }
+    .header h1 {
+      margin: 0;              /* Remove default margin */
+      font-size: 1.8em;       /* Make it a bit bigger */
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <img src="/file/GPG/GPG_Advisers_Logo.png" alt="GPG Advisers Logo">
+    <h1>GPG Override Management</h1>
+  </header>
+  <div class="actions">
+    <button id="refreshBtn">Refresh List</button>
+    <button id="releaseAllBtn" class="danger">Release All Overrides</button>
+    <button id="releaseSelectedBtn" class="danger" disabled>Release Selected</button>
+  </div>
+  
+  <div id="status" class="status info">Loading overridden points...</div>
+  
+
+  <div id="results">
+    <table id="pointsTable" style="display: none;">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="selectAll"></th>
+          <th>Point Name</th>
+          <th>Current Value</th>
+          <th>Location</th>
+          <th>Last Invoked</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="pointsBody"></tbody>
+    </table>
+  </div>
+
+  <script>
+    require(['baja!'], function(baja) {
+      "use strict";
+      
+      // DOM elements
+      const statusDiv = document.getElementById('status');
+      const pointsTable = document.getElementById('pointsTable');
+      const pointsBody = document.getElementById('pointsBody');
+      const refreshBtn = document.getElementById('refreshBtn');
+      const releaseAllBtn = document.getElementById('releaseAllBtn');
+      const releaseSelectedBtn = document.getElementById('releaseSelectedBtn');
+      const selectAllCheckbox = document.getElementById('selectAll');
+      
+    
+
+      
+      // Global variable to store overridden points
+      let overriddenPoints = [];
+      
+      // Helper to show status messages
+      function showStatus(message, type) {
+        statusDiv.textContent = message;
+        statusDiv.className = `status ${type}`;
+      }
+      
+      // Helper to format point values
+      function formatValue(value) {
+        if (!value) return 'N/A';
+        if (value.getValue) return value.getValue().toString();
+        return value.toString();
+      }
+      
+      // Extract a location string from a slot path
+      function extractLocation(slotPath) {
+        const parts = slotPath.split('/');
+        return parts.slice(0, -1).join(' → ');
+      }
+      
+      // Escape HTML characters
+      function escapeHtml(unsafe) {
+        if (!unsafe) return '';
+        return unsafe.toString()
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+      
+      // Toggle the select-all checkbox
+      function toggleSelectAll(e) {
+        const checkboxes = document.querySelectorAll('#pointsBody input[type="checkbox"]');
+        checkboxes.forEach(checkbox => {
+          checkbox.checked = e.target.checked;
+        });
+      }
+      
+      async function getAuditHistoryPath() {
+        try {
+          // Query for the id of the AuditHistory component.
+          const query = "history:|bql:select id where id like '/*/AuditHistory'";
+          const result = await baja.Ord.make(query).get();
+          if (result && result.cursor()) {
+            let auditPath = "";
+            await result.cursor({
+              each: (row) => {
+                // Assuming the first row is what you want.
+                auditPath = row.get("id").toString(); // e.g. "/YourStation/AuditHistory"
+              },
+              limit: 1
+            });
+            console.log("Found AuditHistory path:", auditPath);
+            return auditPath;
+          }
+          throw new Error("AuditHistory component not found.");
+        } catch (error) {
+          console.error("Error retrieving audit history path:", error);
+          return null;
+        }
+      }
+
+
+
+      
+      // Load the full audit history for today using the updated query.
+      async function loadFullAuditHistory() {
+        try {
+          // Get the dynamic AuditHistory path (e.g. "/YourStation/AuditHistory")
+          const auditHistoryPath = await getAuditHistoryPath();
+          if (!auditHistoryPath) {
+            throw new Error("Cannot determine AuditHistory path.");
+          }
+          // Build the full audit query using the returned id.
+          // Prepend "history:" so that the full query is, for example:
+          // "history:/GPG/AuditHistory|bql:select timestamp, target, slotName, userName"
+          const auditQuery = `history:${auditHistoryPath}|bql:select timestamp, target, slotName, userName`;
+          console.log("Dynamic Audit Query:", auditQuery);
+          
+          const result = await baja.Ord.make(auditQuery).get();
+          const auditEvents = [];
+          if (result && result.cursor()) {
+            await result.cursor({
+              each: (row) => {
+                auditEvents.push({
+                  timestamp: row.get("timestamp")?.toString() || "",
+                  target: row.get("target")?.toString() || "",
+                  slotName: row.get("slotName")?.toString() || "",
+                  userName: row.get("userName")?.toString() || ""
+                });
+              },
+              limit: 5000
+            });
+          }
+          console.log("Loaded Audit Events:", auditEvents);
+          return auditEvents;
+        } catch (error) {
+          console.error("Error loading full audit history:", error);
+          return [];
+        }
+      }
+
+
+
+      
+      // Matching function: Compare the point's slot path (with "slot:" removed) to the audit event's target.
+      // Here we use endsWith to allow extra prefixes in the audit target.
+      function matchAuditForPoint(point, auditEvents) {
+        let cleanOrd = point.ord;
+        if (cleanOrd.startsWith("slot:")) {
+          cleanOrd = cleanOrd.substring("slot:".length);
+        }
+        cleanOrd = cleanOrd.trim().toLowerCase();
+        console.log("Matching for point:", cleanOrd);
+        const matches = auditEvents.filter(ev => {
+          if (!ev.target) return false;
+          const auditTarget = ev.target.trim().toLowerCase();
+          console.log("  Checking audit target:", auditTarget);
+          return auditTarget.endsWith(cleanOrd);
+        });
+        if (matches.length > 0) {
+          matches.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          console.log("  Match found:", matches[0]);
+          return matches[0];
+        }
+        console.log("  No match found for", cleanOrd);
+        return null;
+      }
+      
+      // Load all overridden points
+      async function loadOverriddenPoints() {
+        try {
+          showStatus('Loading overridden points...', 'info');
+          pointsTable.style.display = 'none';
+          
+          // Query to find points with active overrides
+          const bqlQuery = "station:|slot:|bql:select displayName, out, slotPath from control:ControlPoint where status.overridden = 'true'";
+          const result = await baja.Ord.make(bqlQuery).get();
+          
+          if (!result || !result.cursor()) {
+            showStatus('No overridden points found.', 'info');
+            overriddenPoints = [];
+            renderPointsTable();
+            return;
+          }
+          
+          overriddenPoints = [];
+          await result.cursor({
+            each: (row) => {
+              try {
+                let slotPath = row.get("slotPath").toString();
+                if (slotPath.includes('|')) {
+                  slotPath = slotPath.split('|').pop();
+                }
+                const point = {
+                  ord: slotPath,
+                  name: row.get("displayName")?.toString() || 'N/A',
+                  currentValue: formatValue(row.get("out")),
+                  location: extractLocation(slotPath)
+                };
+                overriddenPoints.push(point);
+              } catch (error) {
+                console.error("Error processing row:", error);
+              }
+            },
+            limit: 1000
+          });
+          
+          showStatus(`Found ${overriddenPoints.length} overridden points`, 'success');
+          renderPointsTable();
+        } catch (error) {
+          showStatus(`Error loading points: ${error.message}`, 'error');
+          console.error("Error loading overridden points:", error);
+        }
+      }
+      
+      // Render the points table, adding an extra column for audit info (timestamp and username).
+      async function renderPointsTable() {
+        // Load audit events first.
+        const auditEvents = await loadFullAuditHistory();
+        pointsBody.innerHTML = '';
+        
+        if (overriddenPoints.length === 0) {
+          pointsTable.style.display = 'none';
+          releaseAllBtn.disabled = true;
+          releaseSelectedBtn.disabled = true;
+          return;
+        }
+        
+        overriddenPoints.forEach((point, index) => {
+          const row = document.createElement('tr');
+          const audit = matchAuditForPoint(point, auditEvents);
+          const auditInfo = audit 
+            ? `${audit.timestamp} – ${audit.userName}` 
+            : "No Audit Record";
+          
+          row.innerHTML = `
+            <td><input type="checkbox" id="point-${index}"></td>
+            <td>${escapeHtml(point.name)}</td>
+            <td>${escapeHtml(point.currentValue)}</td>
+            <td>${escapeHtml(point.location)}</td>
+            <td title="${escapeHtml(auditInfo)}"><small>${escapeHtml(auditInfo)}</small></td>
+            <td>
+              <button class="danger release-btn" data-ord="${escapeHtml(point.ord)}">
+                Release
+              </button>
+            </td>
+          `;
+          pointsBody.appendChild(row);
+        });
+        
+        pointsTable.style.display = 'table';
+        releaseAllBtn.disabled = false;
+        releaseSelectedBtn.disabled = false;
+        selectAllCheckbox.checked = false;
+      }
+      
+      // Override release function (using 'auto' as the action)
+      async function releaseOverride(ord) {
+        try {
+          let cleanOrd = ord;
+          if (ord.includes('|')) {
+            cleanOrd = ord.split('|').pop();
+          }
+          const fullOrd = "station:|" + cleanOrd;
+          console.log("Attempting to release override for:", fullOrd);
+          const point = await baja.Ord.make(fullOrd).get();
+          if (!point || typeof point.invoke !== 'function') {
+            throw new Error("Resolved object is not a point or does not support 'invoke'");
+          }
+          const overrideVal = baja.$("control:Override", {
+            value: 'auto',
+            duration: baja.RelTime.make({ seconds: 0 })
+          });
+          return point.invoke({
+            slot: 'auto',
+            value: overrideVal
+          });
+        } catch (error) {
+          console.error(`Error releasing override for ${ord}`, error);
+          throw error;
+        }
+      }
+      
+      // Helper to release multiple overrides
+      async function releaseOverrides(points) {
+        try {
+          showStatus(`Releasing ${points.length} overrides...`, 'info');
+          releaseAllBtn.disabled = true;
+          releaseSelectedBtn.disabled = true;
+          let successCount = 0;
+          let failCount = 0;
+          for (const point of points) {
+            try {
+              await releaseOverride(point.ord);
+              successCount++;
+            } catch (error) {
+              failCount++;
+              console.error(`Error releasing override for ${point.ord}`, error);
+            }
+          }
+          showStatus(
+            `Released ${successCount} overrides successfully. ${failCount} failed.`,
+            failCount > 0 ? 'error' : 'success'
+          );
+          await loadOverriddenPoints();
+        } catch (error) {
+          showStatus(`Error releasing overrides: ${error.message}`, 'error');
+          console.error("Error releasing overrides:", error);
+        } finally {
+          releaseAllBtn.disabled = false;
+          releaseSelectedBtn.disabled = overriddenPoints.length === 0;
+        }
+      }
+      
+      // Release all overrides
+      async function releaseAllOverrides() {
+        if (!confirm(`Are you sure you want to release ALL ${overriddenPoints.length} overrides?`)) {
+          return;
+        }
+        await releaseOverrides(overriddenPoints);
+      }
+      
+      // Release selected overrides
+      async function releaseSelectedOverrides() {
+        const selectedPoints = overriddenPoints.filter(
+          (_, index) => document.getElementById(`point-${index}`).checked
+        );
+        if (selectedPoints.length === 0) {
+          showStatus('No points selected', 'error');
+          return;
+        }
+        if (!confirm(`Release ${selectedPoints.length} selected overrides?`)) {
+          return;
+        }
+        await releaseOverrides(selectedPoints);
+      }
+      
+      // Initialize page
+      function init() {
+        refreshBtn.addEventListener('click', loadOverriddenPoints);
+        releaseAllBtn.addEventListener('click', releaseAllOverrides);
+        releaseSelectedBtn.addEventListener('click', releaseSelectedOverrides);
+        selectAllCheckbox.addEventListener('change', toggleSelectAll);
+        loadOverriddenPoints();
+      }
+      
+      init();
+    });
+  </script>
+</body>
+</html>
