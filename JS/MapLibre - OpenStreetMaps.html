@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<!-- @noSnoop -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>OSM Raster Example</title>
+  <link href="/module/Beau/resources/css/maplibre-gl.css" rel="stylesheet">
+  <script type="text/javascript">
+    var require = {
+      paths: {
+        "maplibre": "/module/Beau/resources/js/maplibre/maplibre-gl"
+      },
+      shim: {
+        "maplibre": { exports: "maplibregl" }
+      }
+    };
+  </script>
+  <script type="text/javascript" src="/requirejs/config.js"></script>
+  <script type="text/javascript" src="/module/js/com/tridium/js/ext/require/require.min.js"></script>
+</head>
+<body>
+  <div id="map-container" style="width: 100%; height: 500px;"></div>
+
+  <script>
+    require(['maplibre'], function(maplibregl) {
+      // Set the worker URL as required by Niagara's CSP
+      maplibregl.setWorkerUrl('/module/Beau/resources/js/maplibre/maplibre-gl-worker.js');
+
+      const map = new maplibregl.Map({
+        container: 'map-container',
+        style: '/module/Beau/resources/js/maplibre/tile.json', // OSM style JSON
+        center: [-86.495, 40.044],
+        zoom: 15
+      });
+
+      map.addControl(new maplibregl.NavigationControl());
+    });
+  </script>
+</body>
+</html>
